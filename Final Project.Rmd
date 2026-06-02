@@ -1,0 +1,568 @@
+---
+title: "The Commuting‑Environment Nexus: Traffic Congestion, Transit Use, and Air Quality in 10 Major U.S. Cities (2018–2024)"
+author: "Salman Rashid"
+date: "2026-06-07"
+output:
+  pdf_document:
+    toc: false
+header-includes:
+  - \usepackage[margin=1in]{geometry}
+  - \usepackage{times}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.align = "center",
+  fig.width = 6.5,
+  fig.height = 4
+)
+library(tidyverse)
+library(knitr)
+library(broom)
+library(corrplot)
+library(httr)
+library(jsonlite)
+```
+
+------------------------------------------------------------------------
+
+#### 1. Written Description of the Objective
+
+The primary objective of this project is to investigate how traffic congestion and commuting patterns affect air quality in 10 major U.S. cities using seven years of pooled panel data (2018–2024). I test the hypothesis: Cities with higher traffic congestion and lower public transit usage tend to experience worse air quality (higher PM2.5), even after controlling for income, population density, and summer temperature.
+
+This question is meaningful because transportation is a leading contributor to urban air pollution (EPA, 2021). The analysis uses annual data from four reputable public sources: INRIX (traffic), the American Community Survey (demographics), the EPA (air quality), and NOAA (temperature). The multi-year timeframe reveals persistent relationships rather than single-year fluctuations.
+
+------------------------------------------------------------------------
+
+#### 2. Description of the Script and Workflow
+
+The R script follows four steps:
+
+##### 1. Data Import –
+
+- INRIX congestion: manual entry from published annual scorecard reports (2018–2024).
+
+- ACS data: Census API (direct JSON).
+
+- EPA PM2.5: AQS API (annualData/byCBSA).
+
+- NOAA temperature: CDO API (GHCND daily data, aggregated to summer average).
+
+##### 2. Data Cleaning & Merging – Standardize city names, handle missing values, merge into a single panel data frame (each row = city‑year).
+
+##### 3. Analysis & Visualization – Scatterplot (avg congestion vs. avg PM2.5), bar chart (avg transit use), correlation matrix, and linear regression.
+
+##### 4. Reflection – Discuss lessons learned.
+
+All API calls include polite delays (`Sys.sleep(0.5)`) to respect rate limits. The script is fully reproducible once the user provides their own API keys.
+
+------------------------------------------------------------------------
+
+#### 3. Data Sources, Import, and Tidy Data
+
+##### 3.1 The 10 Cities
+The analysis focuses on 10 large U.S. metropolitan statistical areas (MSAs) for which consistent data are available across all sources.
+
+```{r}
+cities_10 <- c(
+  "New York", "Los Angeles", "Chicago", "Dallas", "Houston",
+  "Washington DC", "Philadelphia", "Seattle", "Miami", "Boston"
+)
+```
+
+##### 3.2 INRIX Traffic Congestion (Manual from Published Reports)
+
+Data on annual hours lost per driver come from the INRIX Global Traffic Scorecard (2018–2024). Values were manually extracted from each year's press releases and "United States Analysis & Ranking" tables using the consistent "hours lost vs. free-flow" methodology introduced in the 2018 scorecard. Note that pre-2018 data used a different metric (peak hours in congestion) and is not comparable; this analysis therefore begins in 2018. NAs reflect city-years not reported in publicly available scorecard summaries, concentrated in Dallas, Houston, Los Angeles, and Seattle for 2018–2022.
+
+```{r}
+# INRIX congestion hours lost per driver, 2018-2024
+# Methodology: "hours lost vs. free-flow" (consistent from 2018 onward)
+# Sources: INRIX annual Global Traffic Scorecard press releases
+# NAs = data not found in publicly available press releases for that city/year
+
+inrix_data <- tribble(
+  ~city,           ~year, ~congestion_hours,
+  # 2018
+  "New York",      2018,  133,
+  "Los Angeles",   2018,  128,
+  "Chicago",       2018,  138,
+  "Dallas",        2018,  NA,
+  "Houston",       2018,  NA,
+  "Washington DC", 2018,  155,
+  "Philadelphia",  2018,  112,
+  "Seattle",       2018,  138,
+  "Miami",         2018,  105,
+  "Boston",        2018,  164,
+  # 2019
+  "New York",      2019,  140,
+  "Los Angeles",   2019,  103,
+  "Chicago",       2019,  145,
+  "Dallas",        2019,  NA,
+  "Houston",       2019,  NA,
+  "Washington DC", 2019,  124,
+  "Philadelphia",  2019,  142,
+  "Seattle",       2019,  NA,
+  "Miami",         2019,  NA,
+  "Boston",        2019,  149,
+  # 2020 - COVID year
+  "New York",      2020,  100,
+  "Los Angeles",   2020,  NA,
+  "Chicago",       2020,  86,
+  "Dallas",        2020,  NA,
+  "Houston",       2020,  NA,
+  "Washington DC", 2020,  29,
+  "Philadelphia",  2020,  94,
+  "Seattle",       2020,  25,
+  "Miami",         2020,  NA,
+  "Boston",        2020,  48,
+  # 2021 - COVID recovery
+  "New York",      2021,  102,
+  "Los Angeles",   2021,  NA,
+  "Chicago",       2021,  104,
+  "Dallas",        2021,  NA,
+  "Houston",       2021,  NA,
+  "Washington DC", 2021,  NA,
+  "Philadelphia",  2021,  90,
+  "Seattle",       2021,  NA,
+  "Miami",         2021,  NA,
+  "Boston",        2021,  78,
+  # 2022
+  "New York",      2022,  117,
+  "Los Angeles",   2022,  NA,
+  "Chicago",       2022,  155,
+  "Dallas",        2022,  NA,
+  "Houston",       2022,  NA,
+  "Washington DC", 2022,  NA,
+  "Philadelphia",  2022,  114,
+  "Seattle",       2022,  NA,
+  "Miami",         2022,  105,
+  "Boston",        2022,  134,
+  # 2023
+  "New York",      2023,  101,
+  "Los Angeles",   2023,  NA,
+  "Chicago",       2023,  96,
+  "Dallas",        2023,  41,
+  "Houston",       2023,  66,
+  "Washington DC", 2023,  62,
+  "Philadelphia",  2023,  77,
+  "Seattle",       2023,  63,
+  "Miami",         2023,  74,
+  "Boston",        2023,  79,
+  # 2024
+  "New York",      2024,  102,
+  "Los Angeles",   2024,  88,
+  "Chicago",       2024,  102,
+  "Dallas",        2024,  41,
+  "Houston",       2024,  66,
+  "Washington DC", 2024,  62,
+  "Philadelphia",  2024,  77,
+  "Seattle",       2024,  63,
+  "Miami",         2024,  74,
+  "Boston",        2024,  79
+)
+
+kable(head(inrix_data, 10), caption = "INRIX congestion data 2018-2024 (first 10 rows)")
+```
+
+##### 3.3 ACS Demographics (Census API)
+
+We use the Census API to obtain % public transit commuters, median household income, and population (to compute density) for each CBSA and year. The code loops over 2018–2024 (5-year ACS estimates, end year).
+
+```{r}
+census_key <- "7a17e78be92b333fd8d43d465fb607db3e7ae59e"
+
+city_cbsa <- tribble(
+  ~city,           ~cbsa_code, ~land_area_sqmi,
+  "New York",      "35620",    4700,
+  "Los Angeles",   "31080",    4850,
+  "Chicago",       "16980",    10500,
+  "Dallas",        "19100",    9250,
+  "Houston",       "26420",    10300,
+  "Washington DC", "47900",    5200,
+  "Philadelphia",  "37980",    4700,
+  "Seattle",       "42660",    4100,
+  "Miami",         "33100",    3100,
+  "Boston",        "14460",    4500
+)
+
+years <- 2018:2024
+acs_list <- list()
+
+options(timeout = 30)
+
+for (yr in years) {
+  for (i in seq_len(nrow(city_cbsa))) {
+    cbsa <- city_cbsa$cbsa_code[i]
+
+    url <- paste0(
+      "https://api.census.gov/data/", yr,
+      "/acs/acs5?get=NAME,B08301_004E,B08301_001E,B19013_001E,B01003_001E",
+      "&for=metropolitan%20statistical%20area/micropolitan%20statistical%20area:",
+      cbsa,
+      "&key=", census_key
+    )
+
+    response <- NULL
+    for (attempt in 1:3) {
+      response <- tryCatch(
+        GET(url, timeout(30)),
+        error = function(e) NULL
+      )
+      if (!is.null(response) && status_code(response) == 200) break
+      Sys.sleep(2)
+    }
+
+    if (!is.null(response) && status_code(response) == 200) {
+      data_json <- fromJSON(content(response, "text", encoding = "UTF-8"))
+      data_df <- as.data.frame(data_json[-1, , drop = FALSE], stringsAsFactors = FALSE)
+      names(data_df) <- data_json[1, ]
+
+      data_clean <- data.frame(
+        city = city_cbsa$city[i],
+        year = yr,
+        transit_use_pct = 100 * as.numeric(data_df$B08301_004E) /
+          as.numeric(data_df$B08301_001E),
+        med_income = as.numeric(data_df$B19013_001E),
+        total_pop = as.numeric(data_df$B01003_001E),
+        stringsAsFactors = FALSE
+      )
+      acs_list[[length(acs_list) + 1]] <- data_clean
+      message("ACS OK: ", city_cbsa$city[i], " ", yr)
+    } else {
+      message("Failed: ", city_cbsa$city[i], " ", yr)
+    }
+  }
+}
+
+acs_data <- bind_rows(acs_list) %>%
+  left_join(city_cbsa %>% select(city, land_area_sqmi), by = "city") %>%
+  mutate(pop_density = total_pop / land_area_sqmi) %>%
+  select(city, year, transit_use_pct, med_income, pop_density)
+
+kable(head(acs_data, 10), caption = "ACS data (first 10 rows)")
+```
+
+##### 3.4 EPA PM2.5 (AQS API)
+
+We retrieve annual mean PM2.5 concentrations (parameter code 88101) for each CBSA and year (2018–2024) using the EPA AQS API.
+
+```{r}
+epa_email <- "rashidsa@cwu.edu"
+epa_key <- "russetheron82"
+epa_list <- list()
+
+for (yr in years) {
+  for (i in 1:nrow(city_cbsa)) {
+    city_name <- city_cbsa$city[i]
+    cbsa <- city_cbsa$cbsa_code[i]
+
+    url <- paste0(
+      "https://aqs.epa.gov/data/api/annualData/byCBSA?email=", epa_email,
+      "&key=", epa_key,
+      "&param=88101",
+      "&bdate=", yr, "0101",
+      "&edate=", yr, "1231",
+      "&cbsa=", cbsa
+    )
+
+    resp <- tryCatch(fromJSON(url), error = function(e) NULL)
+    status <- tryCatch(tolower(resp$Header$status[1]), error = function(e) "failed")
+    body <- tryCatch(resp$Data, error = function(e) NULL)
+
+    if (!is.null(resp) && status == "success" && !is.null(body) && nrow(body) > 0) {
+      body_filtered <- body %>%
+        filter(pollutant_standard == "PM25 Annual 2012", poc == 1, !is.na(arithmetic_mean))
+
+      # Fallback if no rows under 2012 standard
+      if (nrow(body_filtered) == 0) {
+        body_filtered <- body %>% filter(poc == 1, !is.na(arithmetic_mean))
+      }
+
+      pm25_val <- mean(body_filtered$arithmetic_mean, na.rm = TRUE)
+      message(paste("EPA OK:", city_name, yr, "->", round(pm25_val, 2)))
+    } else {
+      pm25_val <- NA
+      message(paste("No EPA data:", city_name, yr, "| status:", status))
+    }
+
+    epa_list <- append(epa_list, list(tibble(city = city_name, year = yr, pm25_annual = pm25_val)))
+    Sys.sleep(0.5)
+  }
+}
+
+epa_data <- bind_rows(epa_list)
+kable(head(epa_data, 10), caption = "EPA PM2.5 data (first 10 rows)")
+```
+
+##### 3.5 NOAA Summer Temperature (CDO API)
+
+We fetch daily maximum and minimum temperature (TMAX, TMIN) for June–August of each year (2018–2024) from NOAA's GHCND dataset using verified high-coverage station IDs, then average TMAX and TMIN to derive a daily mean and aggregate to a summer average per city-year.
+
+```{r}
+noaa_token <- "LakpNDWxPZpVcLoTGTCfoXYhIwRaJSnB"
+
+city_stations <- tribble(
+  ~city,           ~station_id,
+  "New York",      "GHCND:USW00094728", # Central Park
+  "Los Angeles",   "GHCND:USW00023174", # LAX
+  "Chicago",       "GHCND:USW00094846", # O'Hare
+  "Dallas",        "GHCND:USW00013960", # Dallas FAA Airport
+  "Houston",       "GHCND:USW00012960", # Houston Intercontinental
+  "Washington DC", "GHCND:USW00013743", # Reagan National
+  "Philadelphia",  "GHCND:USW00013739", # Philadelphia Intl
+  "Seattle",       "GHCND:USW00024233", # Seattle-Tacoma
+  "Miami",         "GHCND:USW00012839", # Miami Intl
+  "Boston",        "GHCND:USW00014739" # Logan Intl
+)
+
+fetch_daily <- function(station_id, yr, dtype) {
+  url <- paste0(
+    "https://www.ncei.noaa.gov/cdo-web/api/v2/data?",
+    "datasetid=GHCND",
+    "&datatypeid=", dtype,
+    "&stationid=", station_id,
+    "&startdate=", yr, "-06-01",
+    "&enddate=", yr, "-08-31",
+    "&units=standard",
+    "&limit=1000"
+  )
+  resp <- tryCatch(
+    GET(url, add_headers(token = noaa_token)),
+    error = function(e) NULL
+  )
+  if (!is.null(resp) && status_code(resp) == 200) {
+    dat <- fromJSON(content(resp, "text", encoding = "UTF-8"), flatten = TRUE)
+    if (!is.null(dat$results) && nrow(dat$results) > 0) {
+      return(mean(as.numeric(dat$results$value), na.rm = TRUE))
+    }
+  }
+  return(NA_real_)
+}
+
+noaa_list <- list()
+
+for (yr in years) {
+  for (i in seq_len(nrow(city_stations))) {
+    city_name <- city_stations$city[i]
+    station_id <- city_stations$station_id[i]
+
+    tmax <- fetch_daily(station_id, yr, "TMAX")
+    Sys.sleep(0.25)
+    tmin <- fetch_daily(station_id, yr, "TMIN")
+    Sys.sleep(0.25)
+
+    avg_temp_f <- if (!is.na(tmax) && !is.na(tmin)) (tmax + tmin) / 2 else NA_real_
+
+    message(paste(
+      "NOAA:", city_name, yr,
+      if (!is.na(avg_temp_f)) paste(round(avg_temp_f, 1), "F") else "NO DATA"
+    ))
+
+    noaa_list[[length(noaa_list) + 1]] <- tibble(
+      city              = city_name,
+      year              = yr,
+      avg_summer_temp_F = avg_temp_f
+    )
+  }
+}
+
+noaa_data <- bind_rows(noaa_list)
+kable(head(noaa_data, 10), caption = "NOAA summer temperature data (first 10 rows)")
+```
+
+##### 3.6 Merge All Data and Tidy Data Assessment
+
+```{r}
+master_data <- inrix_data %>%
+  left_join(acs_data, by = c("city", "year")) %>%
+  left_join(epa_data, by = c("city", "year")) %>%
+  left_join(noaa_data, by = c("city", "year")) %>%
+  drop_na(pm25_annual, transit_use_pct, congestion_hours)
+
+cat("City-year observations after merging and dropping NAs:", nrow(master_data), "\n")
+cat("Cities represented:", n_distinct(master_data$city), "\n")
+cat("Years represented:", paste(sort(unique(master_data$year)), collapse = ", "), "\n")
+
+kable(head(master_data), caption = "Final merged dataset (first 6 rows)")
+```
+
+**Tidy Data:** Each variable is a column, each city-year is a row, and each cell contains a single value. The data meet all three tidy criteria (Wickham, 2014). Note that after dropping rows with any missing value across the four sources, the panel is unbalanced — cities such as Dallas, Houston, Los Angeles, and Seattle contribute fewer observations due to gaps in the INRIX data for 2018–2022.
+
+---
+
+#### 4. Visualizations and Exploratory Analysis
+
+##### 4.1 Scatterplot: Average Congestion vs. Average PM2.5
+
+```{r}
+avg_data <- master_data %>%
+  group_by(city) %>%
+  summarise(
+    avg_congestion = mean(congestion_hours, na.rm = TRUE),
+    avg_pm25       = mean(pm25_annual, na.rm = TRUE)
+  )
+
+ggplot(avg_data, aes(x = avg_congestion, y = avg_pm25, label = city)) +
+  geom_point(size = 4, alpha = 0.7, color = "steelblue") +
+  geom_text(vjust = -0.8, size = 3, family = "serif") +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  labs(
+    title    = "Higher Traffic Congestion is Associated with Higher PM2.5",
+    subtitle = "City averages across available 2018–2024 observations",
+    x        = "Average annual hours lost per driver (INRIX)",
+    y        = "Average annual mean PM2.5 (µg/m³, EPA)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title    = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+r_cong_pm25 <- cor(avg_data$avg_congestion, avg_data$avg_pm25, use = "complete.obs")
+```
+
+**Observation:** The correlation between average congestion and average PM2.5 is `r ifelse(r_cong_pm25 > 0, "positive", "negative")` (r = `r round(r_cong_pm25, 2)`). In this sample, cities with higher average congestion `r ifelse(r_cong_pm25 > 0, "tend to have higher", "do not tend to have higher")` PM2.5 concentrations`r ifelse(r_cong_pm25 < 0, " — if anything, the relationship runs slightly in the opposite direction", "")`. Given that |r| = `r round(abs(r_cong_pm25), 2)` is close to zero, this bivariate relationship is weak and should not be over-interpreted on its own.
+
+##### 4.2 Bar Chart: Average Public Transit Use by City
+
+```{r}
+avg_transit <- master_data %>%
+  group_by(city) %>%
+  summarise(avg_transit = mean(transit_use_pct, na.rm = TRUE)) %>%
+  arrange(desc(avg_transit)) %>%
+  mutate(city = factor(city, levels = city))
+
+ggplot(avg_transit, aes(x = city, y = avg_transit, fill = avg_transit)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  coord_flip() +
+  labs(
+    title    = "Public Transit Usage Varies Dramatically Across Cities",
+    subtitle = "Average % of workers commuting by public transit, 2018–2024 (ACS)",
+    x        = "",
+    y        = "Transit use (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title      = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle   = element_text(hjust = 0.5)
+  )
+```
+
+**Observation:** `r as.character(avg_transit$city[1])` and `r as.character(avg_transit$city[2])` have the highest average transit shares in this sample, while `r as.character(avg_transit$city[nrow(avg_transit) - 1])` and `r as.character(avg_transit$city[nrow(avg_transit)])` show the lowest, highlighting substantial variation in transit reliance across these metro areas.
+
+##### 4.3 Correlation Matrix (2018–2024 Panel)
+
+```{r}
+numeric_vars <- master_data %>%
+  select(
+    congestion_hours, transit_use_pct, med_income,
+    pop_density, avg_summer_temp_F, pm25_annual
+  )
+
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+corrplot(
+  cor_matrix,
+  method = "color",
+  type = "upper",
+  tl.col = "black",
+  tl.srt = 45,
+  addCoef.col = "black",
+  number.cex = 0.7,
+  title = "Correlation Matrix (2018–2024 panel)",
+  mar = c(0, 0, 1, 0)
+)
+```
+
+```{r}
+r_trans_pm25 <- cor_matrix["transit_use_pct", "pm25_annual"]
+r_temp_pm25  <- cor_matrix["avg_summer_temp_F", "pm25_annual"]
+```
+
+**Findings:** Congestion hours is `r ifelse(r_cong_pm25 > 0, "positively", "negatively")` correlated with PM2.5 (r = `r round(r_cong_pm25, 2)`); transit use is `r ifelse(r_trans_pm25 < 0, "negatively", "positively")` correlated with PM2.5 (r = `r round(r_trans_pm25, 2)`). Summer temperature shows a `r ifelse(r_temp_pm25 > 0, "positive", "negative")` association with PM2.5 (r = `r round(r_temp_pm25, 2)`)`r ifelse(r_temp_pm25 > 0, ", consistent with photochemical reactions that produce secondary particulate matter in hot weather", "")`. Several of these bivariate correlations are weak, which foreshadows the modest and largely non-significant coefficients in the regression below.
+
+##### 4.4 Regression Analysis (Pooled Panel OLS)
+
+```{r}
+model <- lm(
+  pm25_annual ~ congestion_hours + transit_use_pct + med_income +
+    pop_density + avg_summer_temp_F,
+  data = master_data
+)
+tidy_model <- tidy(model, conf.int = TRUE)
+glance_model <- glance(model)
+
+kable(
+  tidy_model,
+  digits   = 3,
+  caption  = "Pooled OLS Regression Results (Dependent variable: annual mean PM2.5)",
+  booktabs = TRUE
+)
+
+kable(
+  glance_model %>% select(r.squared, adj.r.squared, sigma, statistic, p.value, nobs),
+  digits = 3,
+  caption = "Model Fit Statistics",
+  booktabs = TRUE
+)
+```
+
+```{r}
+coef_congestion <- tidy_model %>% filter(term == "congestion_hours")
+coef_transit    <- tidy_model %>% filter(term == "transit_use_pct")
+coef_temp       <- tidy_model %>% filter(term == "avg_summer_temp_F")
+
+sig_text <- function(p) {
+  if (p < 0.05) "statistically significant at the 5% level"
+  else "not statistically significant at conventional levels"
+}
+```
+
+**Interpretation:**
+
+- **Congestion hours:** The estimated coefficient is `r ifelse(coef_congestion$estimate > 0, "positive", "negative")` (β = `r round(coef_congestion$estimate, 3)`, p = `r round(coef_congestion$p.value, 3)`), and it is `r sig_text(coef_congestion$p.value)`. `r ifelse(coef_congestion$estimate > 0, "Holding the other variables constant, more congestion is associated with somewhat higher PM2.5, consistent with vehicle emissions as a pollution source.", "Holding the other variables constant, congestion is associated with slightly lower PM2.5 in this sample, contrary to the original hypothesis — though since the coefficient is not statistically significant, this should be read as 'no detectable relationship' rather than strong evidence of a negative effect.")`
+- **Transit use:** The estimated coefficient is `r ifelse(coef_transit$estimate < 0, "negative", "positive")` (β = `r round(coef_transit$estimate, 3)`, p = `r round(coef_transit$p.value, 3)`), and it is `r sig_text(coef_transit$p.value)`. `r ifelse(coef_transit$estimate < 0, "This is consistent with the hypothesis that higher transit shares are associated with lower PM2.5.", "This runs counter to the original hypothesis, though given the lack of statistical significance it is best interpreted as inconclusive rather than as evidence against the hypothesized relationship.")`
+- **Summer temperature:** The estimated coefficient is `r ifelse(coef_temp$estimate > 0, "positive", "negative")` (β = `r round(coef_temp$estimate, 3)`, p = `r round(coef_temp$p.value, 3)`) and is `r sig_text(coef_temp$p.value)`.
+- **Income and density:** Effects are mixed; density can cut both ways (more emissions but also more transit use and walkability), and neither coefficient is a focus of the hypothesis.
+- **Model fit:** The adjusted R² (`r round(glance_model$adj.r.squared, 3)`) indicates how much of the PM2.5 variance across the panel is explained by this set of predictors; omitted variables (wind patterns, industrial sources, wildfires) likely account for the remaining variation.
+
+**Important caveat:** Most coefficients in this model — including the congestion-hours coefficient — are not statistically significant, so the results should be read as weak/inconclusive associations rather than confirmed relationships. This is also pooled OLS on panel data; city-level fixed effects or first-differencing would more cleanly isolate within-city variation from between-city differences. The current results show (weak) associations, not causal effects.
+
+---
+
+#### 5. Reflection
+
+##### Skills developed:
+
+- Using three different public APIs (Census, EPA, NOAA) to build a multi-source panel dataset from scratch.
+- Handling JSON responses, rate limits, and retry logic across hundreds of API calls.
+- Diagnosing and resolving data gaps (e.g., switching NOAA from GSOM to GHCND when city-level IDs returned empty responses; verifying station IDs against coverage metadata).
+- Producing a fully reproducible research compendium in R Markdown.
+
+##### Lessons learned:
+
+- **Methodology consistency matters.** The INRIX data required careful attention to the 2018 methodology change; mixing pre- and post-2018 values on the same scale would have been misleading.
+- **Missing data is unavoidable in real research.** The unbalanced panel (especially Dallas, Houston, LA, Seattle for 2018–2022) limits the analysis but is honestly reported rather than imputed without justification.
+- **API debugging takes time.** The NOAA GSOM endpoint returned empty JSON for many valid station IDs; only switching to GHCND daily data and verifying stations with bounding-box searches resolved the issue.
+- **Cross-sectional vs. panel:** Pooled OLS on repeated city observations is not the same as cross-sectional analysis. A proper panel model with fixed effects would be the logical next step.
+
+**Were you successful?** Partially. The project successfully answers the research question using authentic, multi-year data from four reputable sources, and demonstrates the full workflow of importing, cleaning, merging, visualizing, and modeling a multi-source panel dataset. However, the evidence does not cleanly support the original hypothesis: the bivariate correlation between congestion and PM2.5 is `r ifelse(r_cong_pm25 > 0, "positive", "weak and negative")`, and the regression coefficient on congestion is `r ifelse(coef_congestion$estimate > 0, "positive but", "negative and")` not statistically significant. The transit-use coefficient `r ifelse(coef_transit$estimate < 0 && coef_transit$p.value < 0.05, "is negative and significant, supporting the hypothesized mode-shift effect", "points in the hypothesized direction but is not statistically significant in this sample")`. Overall, this project is best read as an exploratory first pass that did not find strong support for the hypothesis as stated, and that points toward the need for a richer panel model (e.g., with fixed effects) and a larger, more balanced sample.
+
+---
+
+#### References
+
+EPA (2024). *Air Quality System (AQS) API.* U.S. Environmental Protection Agency. https://aqs.epa.gov/aqsweb/documents/data_api.html
+
+INRIX (2018–2024). *Global Traffic Scorecard.* INRIX Research. https://inrix.com/scorecard/
+
+NOAA (2024). *Climate Data Online (CDO) Web Services.* National Oceanic and Atmospheric Administration. https://www.ncei.noaa.gov/cdo-web/
+
+U.S. Census Bureau (2018–2024). *American Community Survey 5-year estimates.* https://www.census.gov/data/developers/data-sets/acs-5year.html
+
+Wickham, H. (2014). Tidy data. *Journal of Statistical Software, 59*(10), 1–23.
