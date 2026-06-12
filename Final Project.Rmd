@@ -250,7 +250,7 @@ We retrieve annual mean PM2.5 concentrations (parameter code 88101) for each CBS
 
 ```{r}
 epa_email <- Sys.getenv("EPA_API_EMAIL")
-epa_key   <- Sys.getenv("EPA_API_KEY")
+epa_key <- Sys.getenv("EPA_API_KEY")
 if (epa_email == "" || epa_key == "") {
   stop("EPA_API_EMAIL and/or EPA_API_KEY not set.")
 }
@@ -486,7 +486,7 @@ corrplot(
 
 ```{r}
 r_trans_pm25 <- cor_matrix["transit_use_pct", "pm25_annual"]
-r_temp_pm25  <- cor_matrix["avg_summer_temp_F", "pm25_annual"]
+r_temp_pm25 <- cor_matrix["avg_summer_temp_F", "pm25_annual"]
 ```
 
 **Findings:** Congestion hours is `r ifelse(r_cong_pm25 > 0, "positively", "negatively")` correlated with PM2.5 (r = `r round(r_cong_pm25, 2)`); transit use is `r ifelse(r_trans_pm25 < 0, "negatively", "positively")` correlated with PM2.5 (r = `r round(r_trans_pm25, 2)`). Summer temperature shows a `r ifelse(r_temp_pm25 > 0, "positive", "negative")` association with PM2.5 (r = `r round(r_temp_pm25, 2)`)`r ifelse(r_temp_pm25 > 0, ", consistent with photochemical reactions that produce secondary particulate matter in hot weather", "")`. Several of these bivariate correlations are weak, which foreshadows the modest and largely non-significant coefficients in the regression below.
@@ -519,12 +519,15 @@ kable(
 
 ```{r}
 coef_congestion <- tidy_model %>% filter(term == "congestion_hours")
-coef_transit    <- tidy_model %>% filter(term == "transit_use_pct")
-coef_temp       <- tidy_model %>% filter(term == "avg_summer_temp_F")
+coef_transit <- tidy_model %>% filter(term == "transit_use_pct")
+coef_temp <- tidy_model %>% filter(term == "avg_summer_temp_F")
 
 sig_text <- function(p) {
-  if (p < 0.05) "statistically significant at the 5% level"
-  else "not statistically significant at conventional levels"
+  if (p < 0.05) {
+    "statistically significant at the 5% level"
+  } else {
+    "not statistically significant at conventional levels"
+  }
 }
 ```
 
