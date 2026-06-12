@@ -170,7 +170,8 @@ kable(head(inrix_data, 10), caption = "INRIX congestion data 2018-2024 (first 10
 We use the Census API to obtain % public transit commuters, median household income, and population (to compute density) for each CBSA and year. The code loops over 2018–2024 (5-year ACS estimates, end year).
 
 ```{r}
-census_key <- "7a17e78be92b333fd8d43d465fb607db3e7ae59e"
+census_key <- Sys.getenv("CENSUS_API_KEY")
+if (census_key == "") stop("CENSUS_API_KEY not set.")
 
 city_cbsa <- tribble(
   ~city,           ~cbsa_code, ~land_area_sqmi,
@@ -248,8 +249,11 @@ kable(head(acs_data, 10), caption = "ACS data (first 10 rows)")
 We retrieve annual mean PM2.5 concentrations (parameter code 88101) for each CBSA and year (2018–2024) using the EPA AQS API.
 
 ```{r}
-epa_email <- "rashidsa@cwu.edu"
-epa_key <- "russetheron82"
+epa_email <- Sys.getenv("EPA_API_EMAIL")
+epa_key   <- Sys.getenv("EPA_API_KEY")
+if (epa_email == "" || epa_key == "") {
+  stop("EPA_API_EMAIL and/or EPA_API_KEY not set.")
+}
 epa_list <- list()
 
 for (yr in years) {
@@ -300,7 +304,8 @@ kable(head(epa_data, 10), caption = "EPA PM2.5 data (first 10 rows)")
 We fetch daily maximum and minimum temperature (TMAX, TMIN) for June–August of each year (2018–2024) from NOAA's GHCND dataset using verified high-coverage station IDs, then average TMAX and TMIN to derive a daily mean and aggregate to a summer average per city-year.
 
 ```{r}
-noaa_token <- "LakpNDWxPZpVcLoTGTCfoXYhIwRaJSnB"
+noaa_token <- Sys.getenv("NOAA_API_TOKEN")
+if (noaa_token == "") stop("NOAA_API_TOKEN not set.")
 
 city_stations <- tribble(
   ~city,           ~station_id,
